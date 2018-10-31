@@ -1,0 +1,223 @@
+--- title: "Weighted Unifrac Analysis" output: html_notebook ---
+
+This workbook includes code for running phylogenetic distance based redundancy analyses, based on work from several papers including:
+
+1. Shankar, V., R. Agans, and O. Paliy. "Advantages of phylogenetic distance based constrained ordination analyses for the examination of microbial communities." Scientific Reports 7.1 (2017): 6481.
+2.Lee, Sang-Hoon, et al. "Divergent extremes but convergent recovery of bacterial and archaeal soil communities to an ongoing subterranean coal mine fire." The ISME journal 11.6 (2017): 1447.
+
+--- 
+It uses the capscle function in vegan to identify correlations between W. Unifrac distances and continuous environmental gradients and categorical data.
+
+### Imports and libraries
+```{r}
+library(vegan)
+library(tidyverse)
+library(ggplot2)
+library(ggthemes)
+library(scales)
+library(RColorBrewer)
+
+# Loading WUF and environmental data:
+# BD 
+wuf_data = read.table('../Seq_data/Updated_files/beta_WUF_diversity/WUF_dm2.txt')
+# environmental data:
+#meta_table = read.table('../Metadata/ibp_metadata_10.22.18.txt', sep='\t', header=TRUE)
+meta_table <- read.table('../Metadata/ibp_metadata_10.22.18.txt', header=TRUE, row.names=2, sep='\t')
+
+# Eliminate samples with no metadata and derived spatial metadata variables (for now):
+wuf_data2 <- wuf_data[row.names(meta_table), row.names(meta_table)] 
+Meta_vars <- c("USDA_soil_series", "z", "cum_depth", "inundation_fraction.year_average", "pH",
+	"Organic_matter", "Elevation_WT", "Soil_type_and_color", "Ksat", "Pb","Cu","Fe","Zn","Ca","K","Mg","P","Na", 'WLWNum')
+meta_table_reduced <- meta_table[,Meta_vars]
+```
+
+
+### Data Manipulation and vegan
+```{r}
+
+
+# Use distance based adonis to identify initially significant environmental variables and write full results:
+db_Adonis <- adonis(wuf_data2 ~ ., data=meta_table_reduced)
+db_Adonis$aov.tab
+write.table(db_Adonis$aov.tab, file = "../output/WUF_full_adonis.txt", quote = FALSE, sep = "\t",
+row.names = TRUE, col.names = TRUE)
+
+# Collect significant environmental variables (arbitrarily at [P<.01] for now)
+bestEnvVariables<-rownames(db_Adonis$aov.tab)[db_Adonis$aov.tab$"Pr(>F)"<=0.01]
+bestEnvVariables<-bestEnvVariables[!is.na(bestEnvVariables)]
+bestEnvVariables<-bestEnvVariables[!bestEnvVariables %in% c('WLWNum', 'Soil_type_and_color')]
+
+# Running capscale on significant vars:
+formula_string = as.formula(paste("wuf_data2", paste(bestEnvVariables, collapse=" + "), sep=" ~ "))
+dbRDA = capscale(formula_string, data=meta_table_reduced)
+
+# Create a list of capscale scores 
+scrs<-scores(dbRDA,display=c("wa","lc","bp","cn"))
+scrs
+scores(dbRDA, correlation = TRUE)
+envfit(dbRDA, meta_table_reduced)
+
+#Extract site data first and identification variables for plotting:
+df_sites<-data.frame(scrs$sites)
+df_sites['soil.series'] <- meta_table_reduced$USDA_soil_series
+df_sites['depth'] <- meta_table$cum_depth
+df_sites['inundation.fraction'] <- meta_table_reduced$inundation_fraction.year_average
+str(df_sites)
+
+# Biplot + soil-type centroids:
+# Get centroids + names
+centroids <- as.data.frame(scrs$centroids)
+centroids['SoilType'] <- as.factor(c('Hoopeston fine sandy loam', 'Selma loam', 'Watseka loamy fine sand'))
+
+
+# Subset biplot scores to show
+multiplier <- vegan:::ordiArrowMul(scrs$biplot)
+df_arrows<- scrs$biplot*multiplier
+colnames(df_arrows)<-c("x","y")
+df_arrows=as.data.frame(df_arrows)
+df_arrows2 <- df_arrows[3:nrow(df_arrows),]
+
+# Fix names for printing
+rownames(df_arrows2)
+arrow_names <- c("Elevation", "Depth","Annual Inundation","pH", "Organic Matter %", "Water Table Elevation", "Pb", "Cu", "Ca")
+
+```
+
+### Plotting raw data + biplot scores
+```{r}
+multiplier <- vegan:::ordiArrowMul(scrs$biplot)
+df_arrows<- scrs$biplot*multiplier*2.3
+colnames(df_arrows)<-c("x","y")
+df_arrows=as.data.frame(df_arrows)
+df_arrows2 <- df_arrows[3:nrow(df_arrows),]
+
+
+# Plotting
+p<-ggplot()
+p<-p+geom_point(data=df_sites, mapping = aes(CAP1,CAP2, shape=soil.series, fill=inundation.fraction), size=3, alpha = .7, color='black') + scale_shape_manual(values=c(21,22,24)) + xlim(-2.2, 2.13)
+
+colorz <- c('#a50026','#d73027','#f46d43','#fdae61','#fee090','#ffffbf','#e0f3f8','#abd9e9','#74add1','#4575b4','#313695')
+p <- p + scale_fill_gradientn(colors = colorz)
+p <- p + theme_bw() + theme(panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+p <- p + labs(x='CAP1 (27% Variance Explained)', y='CAP2 (7% Variance Explained)', shape='Soil Series', color='Inundation Fraction') + ggtitle("Weighted Unifrac Distance Based Redundancy Analysis")
+
+p<- p + theme(
+  legend.box.background = element_rect(),
+  legend.box.margin = margin(6, 6, 6, 6) )
+
+p<-p+geom_segment(data=df_arrows2, aes(x = 0, y = 0, xend = x, yend = y),
+                 arrow = arrow(length = unit(0.2, "cm")),color="black",alpha=1)
+
+# Manually adjust point locations:
+label_locs <- df_arrows2*1.15
+# Elevation:
+label_locs[1,2] <- label_locs[1,2]-.1
+label_locs[1,1] <- label_locs[1,1]+.1
+# Depth:
+label_locs[2,2] <- label_locs[2,2]-.1
+# Organic matter: 
+label_locs[5,1] <- label_locs[5,1] -.25
+# Pb:
+label_locs[7,1] <- label_locs[7,1] -.1
+# inundation
+label_locs[3,2] <- label_locs[3,2] +.05
+
+p<-p+geom_text(data=as.data.frame(label_locs),aes(x, y, label = arrow_names),color="black",alpha=1,size=3.5)
+print(p)
+
+#ggsave("../output/WUF_dbRDA3.png", width = 8, height = 6)
+```
+
+## Partial RDA
+
+Previous ordinations were sequential, meaning variance explained didn't account for co-linearity of predictors.
+
+Below, partial RDA is used to partition variance into unique and shared sections.
+Previously, I have used a Leave One Out style of variance partitioning. I should look at what options exist for doing this differently. 
+
+
+Basically, group variables into:
+
+metals
+depth
+inundation
+pH
+organic matter
+soiltype vars
+soilcolor vars
+
+setup:
+1. make dummy/conditional vars <- done!
+2. Get a simplified/consisten list of samples etc. 
+
+for each group:
+Write LM formula using variable grousp: condition (need to use eval here I think cuz I don't know another way?)
+
+### One-hot encoding for categorical values
+```{r}
+oneHotEncode <- function(dataframe, col){
+	# Converts a column in dataframe to a series of columns named
+	# column.VAL1 etc. where each new column is 1 when value matches or 0 otherwise. 
+	for (unique_value in unique(dataframe[[col]])){
+		dataframe[paste(col, unique_value, sep = ".")] <- ifelse (dataframe[[col]] == unique_value, 1, 0)
+	}
+	return(dataframe)
+}
+
+meta_table_w_dummies = oneHotEncode(meta_table_reduced, "Soil_type_and_color")
+meta_table_w_dummies = oneHotEncode(meta_table_w_dummies, "USDA_soil_series")
+drops <- c("USDA_soil_series","Soil_type_and_color")
+meta_table_w_dummies = meta_table_w_dummies[, !(names(meta_table_w_dummies) %in% drops)]
+
+```
+
+```{r}
+# Parameter groupings for partialing out
+depth = c("z", "cum_depth")
+metals = c("Pb", "Cu", "Fe", "Zn", "Ca", "K", "Mg", "P", "Na")
+soiltype = grep("Soil", names(meta_table_w_dummies), perl=TRUE, value=TRUE)
+USDA_soil = grep("USDA", names(meta_table_w_dummies), perl=TRUE, value=TRUE)
+inundation = c("inundation_fraction.year_average")
+pH = c("pH")
+
+groups = list(depth, metals, inundation, pH, soiltype, USDA_soil)
+groups = list(depth)
+capscale_results = vector("list", 6)
+for (group_ind in 1:6){
+	model_terms = paste(unlist(groups[c(-group_ind)]),collapse = " + ")
+	condition = paste(groups[[group_ind]], collapse = " + ")
+	model_string = stringr::str_interp("${model} + Condition(${conditional})", 
+                    list(model = model_terms, conditional = condition))
+	formula = as.formula(paste(c("wuf_data2", model_string), collapse =" ~ "))
+	capscale_results[[group_ind]] = capscale(formula, data = meta_table_w_dummies)
+	print(capscale_results[[group_ind]])
+}
+Condition(cum_depth)
+inundation_minus_depth = capscale(formula = wuf_data2 ~ pH , data =
+meta_table_w_dummies)
+inundation_minus_depth
+
+```
+
+### Setup capscale groupings:
+possible tht basically no variance uniquely explained by anything?
+ paste variable names together as strings and then lapply(string_formulas, function(form){lm(as.formula(form), data = df})
+Below is basically a solution to the problem, I just need to settle on my split ordering and get the model working. 
+```{r}
+
+formula_string = as.formula(paste("wuf_data2", paste(bestEnvVariables, collapse=" + "), sep=" ~ "))
+dbRDA = capscale(formula_string, data=meta_table_reduced)
+
+groups = c("1", "2", "3")
+
+for (variable in groups){
+	form = stringr::str_interp("stuff ~ ${thing}", 
+                    list(thing = variable))
+	as.formula(form)
+	print(form)
+}
+
+```
+

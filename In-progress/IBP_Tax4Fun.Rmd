@@ -1,0 +1,24 @@
+---
+title: "Indian Boundary Prairie Tax4Fun Calculations"
+output: html_notebook
+author: Jim Griffin
+Date: 6/4/18
+---
+
+```{r}
+library(Tax4Fun)
+library(MASS)
+
+# Let's try with the rarefied OTU table first:
+# I should also check with % of sequences are included in this:
+QIIME_data <- importQIIMEData('../Seq_data/Updated_files/biom/IBP_mc10_ms5000_w_tax.txt')
+QIIME_data_s115 <- importQIIMEData('../Seq_data/Updated_files/biom/Full_DADA_table/full_biom_w_tax.txt')
+
+tax4fun_results <- Tax4Fun(QIIME_data_s115, folderReferenceData = '~/Desktop/tax4fun_functional_16s_annotation/SILVA115/')
+
+
+write.matrix(tax4fun_results$Tax4FunProfile, file='~/Desktop/tax4fun_functional_16s_annotation/tax4fun_results.txt', sep="\t")
+```
+
+
+
